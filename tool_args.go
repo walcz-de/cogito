@@ -69,7 +69,7 @@ func parseToolCalls(calls []openai.ToolCall, finishReason string) ([]*ToolChoice
 		arguments := make(map[string]any)
 		raw := tc.Function.Arguments
 		if strings.TrimSpace(raw) != "" {
-			if err := json.Unmarshal([]byte(raw), &arguments); err != nil {
+			if err := parseStreamedToolArgs(raw, &arguments); err != nil {
 				tail := raw
 				if len(tail) > 80 {
 					tail = tail[len(tail)-80:]
@@ -168,4 +168,23 @@ func newToolCallID() string {
 	var b [12]byte
 	_, _ = rand.Read(b[:])
 	return "call_" + hex.EncodeToString(b[:])
+}
+
+// parseStreamedToolArgs unmarshals tool-call arguments into out, tolerant of a known
+// defect where the full arguments object is concatenated more than once ("{...}{...}") — e.g.
+// some providers behind a proxy that maps Anthropic/Gemini tool-call streaming into OpenAI
+// deltas re-emit the complete object. A plain json.Unmarshal then fails with
+// "invalid character '{' after top-level value". On that failure we recover the FIRST complete
+// top-level JSON object via json.Decoder; well-formed arguments take the fast path.
+func parseStreamedToolArgs(raw string, out *map[string]any) error {
+	if err := json.Unmarshal([]byte(raw), out); err == nil {
+		return nil
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	recovered := make(map[string]any)
+	if err := dec.Decode(&recovered); err != nil {
+		return err
+	}
+	*out = recovered
+	return nil
 }
