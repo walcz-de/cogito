@@ -228,3 +228,54 @@ func TestExecuteToolsRichPolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestForcedPickAfterAssistantEndsWithUserTurn pins the fix for the gemma-4
+// sampler failure: a forced tool choice right after an assistant (reasoning)
+// turn must close with a user turn; without forcing, or when the last turn is
+// already a user turn, the conversation is passed through unchanged.
+func TestForcedPickAfterAssistantEndsWithUserTurn(t *testing.T) {
+	conv := []openai.ChatCompletionMessage{
+		{Role: "user", Content: "what's the weather in Boston?"},
+		{Role: "assistant", Content: "I should call the weather tool."},
+	}
+	got := closeWithUserTurnForForcedPick(conv, "pick_tool")
+	if len(got) != 3 || got[2].Role != "user" || got[2].Content == "" {
+		t.Fatalf("expected a closing user turn after the assistant turn, got %+v", got)
+	}
+	if len(conv) != 2 {
+		t.Fatalf("input must not be mutated, got %d messages", len(conv))
+	}
+	if got := closeWithUserTurnForForcedPick(conv, ""); len(got) != 2 {
+		t.Fatalf("without a forced tool the conversation must pass through, got %d", len(got))
+	}
+	user := []openai.ChatCompletionMessage{{Role: "user", Content: "hi"}}
+	if got := closeWithUserTurnForForcedPick(user, "pick_tool"); len(got) != 1 {
+		t.Fatalf("a conversation already ending with a user turn must pass through, got %d", len(got))
+	}
+}
+
+// The non-streaming decision path must close a forced pick that follows an
+// assistant turn with a user turn on the request the model receives; an
+// unforced decision is sent unchanged.
+func TestDecisionForcedPickAfterAssistantRequestEndsWithUser(t *testing.T) {
+	conv := []openai.ChatCompletionMessage{
+		{Role: "user", Content: "Wann wurde Siemens gegründet?"},
+		{Role: "assistant", Content: "I should look this up."},
+	}
+	forced := &forcedFallbackLLM{}
+	if _, err := decision(context.Background(), forced, conv, testTool(), "assist", 1); err != nil {
+		t.Fatalf("forced decision failed: %v", err)
+	}
+	sent := forced.calls[0].Messages
+	if last := sent[len(sent)-1]; last.Role != openai.ChatMessageRoleUser {
+		t.Fatalf("forced pick after an assistant turn must end with a user turn, got %q", last.Role)
+	}
+
+	free := &forcedFallbackLLM{}
+	if _, err := decision(context.Background(), free, conv, testTool(), "", 1); err != nil {
+		t.Fatalf("unforced decision failed: %v", err)
+	}
+	if got := free.calls[0].Messages; len(got) != len(conv) || got[len(got)-1].Role != openai.ChatMessageRoleAssistant {
+		t.Fatalf("unforced decision must be sent unchanged, got %d messages ending with %q", len(got), got[len(got)-1].Role)
+	}
+}

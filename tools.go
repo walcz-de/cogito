@@ -258,6 +258,36 @@ func normalizeSystemMessages(messages []openai.ChatCompletionMessage) []openai.C
 	return result
 }
 
+// closeWithUserTurnForForcedPick appends a short user turn when a FORCED tool
+// choice would otherwise follow an assistant message. Some chat templates
+// (measured 2026-09-25 with gemma-4-26B-A4B on LocalAI/llama.cpp: "Failed to
+// initialize samplers: std::exception", 5/5 attempts) cannot build the
+// constrained sampler for a forced function call when the last turn is an
+// assistant turn — the reasoning turn cogito emits right before pick_tool.
+// Ending the conversation with a user turn makes the same request succeed
+// (verified end-to-end through a rewriting proxy: 2/2 specs passed). Models
+// that never had the problem (qwen3.6, KAT-Coder) are unaffected by the
+// extra turn.
+func closeWithUserTurnForForcedPick(messages []openai.ChatCompletionMessage, forceTool string) []openai.ChatCompletionMessage {
+	if forceTool == "" || len(messages) == 0 || messages[len(messages)-1].Role != "assistant" {
+		return messages
+	}
+	out := make([]openai.ChatCompletionMessage, len(messages), len(messages)+1)
+	copy(out, messages)
+	return append(out, openai.ChatCompletionMessage{Role: "user", Content: "Pick the tool now."})
+}
+
+// closeConversationWithUserTurnForForcedPick is closeWithUserTurnForForcedPick
+// for the provider-aware message list of the non-streaming decision path.
+func closeConversationWithUserTurnForForcedPick(messages []Message, forceTool string) []Message {
+	if forceTool == "" || len(messages) == 0 || messages[len(messages)-1].Portable.Role != openai.ChatMessageRoleAssistant {
+		return messages
+	}
+	out := make([]Message, len(messages), len(messages)+1)
+	copy(out, messages)
+	return append(out, Message{Portable: openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: "Pick the tool now."}})
+}
+
 // mergeConsecutiveAssistantMessages collapses runs of two or more consecutive
 // assistant messages into a single assistant message. Some chat backends
 // (notably llama.cpp via LocalAI) reject a request whose message list ends with
@@ -317,7 +347,7 @@ func decisionWithStreaming(ctx context.Context, llm LLM, conversation []openai.C
 	}()
 
 	req := openai.ChatCompletionRequest{
-		Messages: mergeConsecutiveAssistantMessages(normalizeSystemMessages(conversation)),
+		Messages: closeWithUserTurnForForcedPick(mergeConsecutiveAssistantMessages(normalizeSystemMessages(conversation)), forceTool),
 		Tools:    tools.ToOpenAI(),
 	}
 
@@ -729,6 +759,7 @@ func decisionConversation(ctx context.Context, llm LLM, conversation []Message,
 	if err != nil {
 		return nil, err
 	}
+	messages = closeConversationWithUserTurnForForcedPick(messages, forceTool)
 	decision := openai.ChatCompletionRequest{Tools: tools.ToOpenAI()}
 
 	if forceTool != "" {
