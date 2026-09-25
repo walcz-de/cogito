@@ -124,4 +124,3 @@ func TestFragmentForcedPathsCloseWithUserTurn(t *testing.T) {
 		}
 	}
 }
-
