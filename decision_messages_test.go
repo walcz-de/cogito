@@ -108,3 +108,20 @@ func TestForcedPickAfterAssistantEndsWithUserTurn(t *testing.T) {
 		t.Fatalf("a conversation already ending with a user turn must pass through, got %d", len(got))
 	}
 }
+
+// TestFragmentForcedPathsCloseWithUserTurn pins the same guarantee on the Fragment
+// entry points: SelectTool with a forced tool and ExtractStructure (forced "json")
+// must not send a conversation that ends on an assistant turn.
+func TestFragmentForcedPathsCloseWithUserTurn(t *testing.T) {
+	conv := []openai.ChatCompletionMessage{
+		{Role: "user", Content: "summarise"},
+		{Role: "assistant", Content: "reasoning about the summary"},
+	}
+	for _, force := range []string{"pick_tool", "json"} {
+		got := closeWithUserTurnForForcedPick(conv, force)
+		if got[len(got)-1].Role != "user" {
+			t.Fatalf("forced %q after an assistant turn must end with a user turn, got %q", force, got[len(got)-1].Role)
+		}
+	}
+}
+

@@ -242,7 +242,7 @@ func (r Fragment) Extract(ctx context.Context, llm LLM, obj any) error {
 // and unmarshals it into the provided destination
 func (r Fragment) ExtractStructure(ctx context.Context, llm LLM, s structures.Structure) error {
 	toolName := "json"
-	messages := slices.Clone(r.Messages)
+	messages := closeWithUserTurnForForcedPick(slices.Clone(r.Messages), toolName)
 
 	decision := openai.ChatCompletionRequest{
 		Messages: messages,
@@ -313,7 +313,7 @@ type ToolCallDecision struct {
 
 // SelectTool allows the LLM to select a tool from the fragment of conversation
 func (f Fragment) SelectTool(ctx context.Context, llm LLM, availableTools Tools, forceTool string) (Fragment, *ToolChoice, error) {
-	messages := slices.Clone(f.Messages)
+	messages := closeWithUserTurnForForcedPick(slices.Clone(f.Messages), forceTool)
 	decision := openai.ChatCompletionRequest{
 		Messages: messages,
 		Tools:    availableTools.ToOpenAI(),
