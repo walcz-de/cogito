@@ -272,6 +272,25 @@ func normalizeSystemMessages(messages []openai.ChatCompletionMessage) []openai.C
 // conversation handed to a decision call must be normalized first. Merging
 // preserves all content and tool calls while guaranteeing the list never ends
 // with consecutive assistant messages.
+// closeWithUserTurnForForcedPick appends a short user turn when a FORCED tool
+// choice would otherwise follow an assistant message. Some chat templates
+// (measured 2026-09-25 with gemma-4-26B-A4B on LocalAI/llama.cpp: "Failed to
+// initialize samplers: std::exception", 5/5 attempts) cannot build the
+// constrained sampler for a forced function call when the last turn is an
+// assistant turn — the reasoning turn cogito emits right before pick_tool.
+// Ending the conversation with a user turn makes the same request succeed
+// (verified end-to-end through a rewriting proxy: 2/2 specs passed). Models
+// that never had the problem (qwen3.6, KAT-Coder) are unaffected by the
+// extra turn.
+func closeWithUserTurnForForcedPick(messages []openai.ChatCompletionMessage, forceTool string) []openai.ChatCompletionMessage {
+	if forceTool == "" || len(messages) == 0 || messages[len(messages)-1].Role != "assistant" {
+		return messages
+	}
+	out := make([]openai.ChatCompletionMessage, len(messages), len(messages)+1)
+	copy(out, messages)
+	return append(out, openai.ChatCompletionMessage{Role: "user", Content: "Pick the tool now."})
+}
+
 func mergeConsecutiveAssistantMessages(messages []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
 	if len(messages) < 2 {
 		return messages
@@ -308,7 +327,7 @@ func decisionWithStreaming(ctx context.Context, llm LLM, conversation []openai.C
 	}
 
 	req := openai.ChatCompletionRequest{
-		Messages: mergeConsecutiveAssistantMessages(normalizeSystemMessages(conversation)),
+		Messages: closeWithUserTurnForForcedPick(mergeConsecutiveAssistantMessages(normalizeSystemMessages(conversation)), forceTool),
 		Tools:    tools.ToOpenAI(),
 	}
 
@@ -613,7 +632,7 @@ func decision(ctx context.Context, llm LLM, conversation []openai.ChatCompletion
 	tools Tools, forceTool string, maxRetries int) (*decisionResult, error) {
 
 	decision := openai.ChatCompletionRequest{
-		Messages: mergeConsecutiveAssistantMessages(normalizeSystemMessages(conversation)),
+		Messages: closeWithUserTurnForForcedPick(mergeConsecutiveAssistantMessages(normalizeSystemMessages(conversation)), forceTool),
 		Tools:    tools.ToOpenAI(),
 	}
 

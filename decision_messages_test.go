@@ -83,3 +83,28 @@ func TestMergeConsecutiveAssistantNoOp(t *testing.T) {
 		t.Fatalf("expected well-formed conversation to be unchanged (3 messages), got %d", len(merged))
 	}
 }
+
+// TestForcedPickAfterAssistantEndsWithUserTurn pins the fix for the gemma-4
+// sampler failure: a forced tool choice right after an assistant (reasoning)
+// turn must close with a user turn; without forcing, or when the last turn is
+// already a user turn, the conversation is passed through unchanged.
+func TestForcedPickAfterAssistantEndsWithUserTurn(t *testing.T) {
+	conv := []openai.ChatCompletionMessage{
+		{Role: "user", Content: "what's the weather in Boston?"},
+		{Role: "assistant", Content: "I should call the weather tool."},
+	}
+	got := closeWithUserTurnForForcedPick(conv, "pick_tool")
+	if len(got) != 3 || got[2].Role != "user" || got[2].Content == "" {
+		t.Fatalf("expected a closing user turn after the assistant turn, got %+v", got)
+	}
+	if len(conv) != 2 {
+		t.Fatalf("input must not be mutated, got %d messages", len(conv))
+	}
+	if got := closeWithUserTurnForForcedPick(conv, ""); len(got) != 2 {
+		t.Fatalf("without a forced tool the conversation must pass through, got %d", len(got))
+	}
+	user := []openai.ChatCompletionMessage{{Role: "user", Content: "hi"}}
+	if got := closeWithUserTurnForForcedPick(user, "pick_tool"); len(got) != 1 {
+		t.Fatalf("a conversation already ending with a user turn must pass through, got %d", len(got))
+	}
+}
