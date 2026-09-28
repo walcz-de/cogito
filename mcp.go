@@ -24,9 +24,23 @@ func (t *mcpTool) Tool() openai.Tool {
 	// A tool without arguments has no properties, and the unmarshal leaves
 	// the map nil. jsonschema.Definition encoded that as {}, but this
 	// struct would send null, which vLLM and others reject.
-	props := t.props
+	//
+	// The properties are sent as the server declared them (after
+	// coerceNullableTypes), not as the jsonschema.Definition copy: that type
+	// has no anyOf, $ref or nested additionalProperties, so a round trip
+	// through it dropped them and the model saw an argument with no allowed
+	// shape. The Definition copy stays the discovery gate (a tool whose
+	// properties do not unmarshal into it is still skipped) and the fallback
+	// for tools built without a raw schema.
+	props := t.inputSchema.Properties
+	if props == nil && t.props != nil {
+		props = map[string]any{}
+		if dat, err := json.Marshal(t.props); err == nil {
+			_ = json.Unmarshal(dat, &props)
+		}
+	}
 	if props == nil {
-		props = map[string]jsonschema.Definition{}
+		props = map[string]any{}
 	}
 	return openai.Tool{
 		Type: openai.ToolTypeFunction,
@@ -38,6 +52,8 @@ func (t *mcpTool) Tool() openai.Tool {
 				Properties:           props,
 				Required:             t.inputSchema.Required,
 				AdditionalProperties: t.inputSchema.AdditionalProperties,
+				Defs:                 t.inputSchema.Defs,
+				Definitions:          t.inputSchema.Definitions,
 			},
 		},
 	}
@@ -114,6 +130,10 @@ type toolInputSchema struct {
 	// struct) rejects a call that has one, so the model should see the same
 	// rule, and a strict or grammar-constrained backend can enforce it.
 	AdditionalProperties any `json:"additionalProperties,omitempty"`
+	// Defs and Definitions carry the named schemas a property's "$ref"
+	// points to; without them the reference cannot be resolved.
+	Defs        map[string]any `json:"$defs,omitempty"`
+	Definitions map[string]any `json:"definitions,omitempty"`
 }
 
 // mcpToolParameters is the parameters schema an MCP tool is advertised
@@ -121,10 +141,12 @@ type toolInputSchema struct {
 // additionalProperties field, and embedding it would not help: its value
 // MarshalJSON would replace this struct's encoding.
 type mcpToolParameters struct {
-	Type                 jsonschema.DataType              `json:"type"`
-	Properties           map[string]jsonschema.Definition `json:"properties"`
-	Required             []string                         `json:"required,omitempty"`
-	AdditionalProperties any                              `json:"additionalProperties,omitempty"`
+	Type                 jsonschema.DataType `json:"type"`
+	Properties           map[string]any      `json:"properties"`
+	Required             []string            `json:"required,omitempty"`
+	AdditionalProperties any                 `json:"additionalProperties,omitempty"`
+	Defs                 map[string]any      `json:"$defs,omitempty"`
+	Definitions          map[string]any      `json:"definitions,omitempty"`
 }
 
 // CoerceNullableTypes is an exported alias for the same workaround so
