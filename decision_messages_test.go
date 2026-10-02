@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/sashabaranov/go-openai"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -241,6 +242,14 @@ func TestForcedPickAfterAssistantEndsWithUserTurn(t *testing.T) {
 	got := closeWithUserTurnForForcedPick(conv, "pick_tool")
 	if len(got) != 3 || got[2].Role != "user" || got[2].Content == "" {
 		t.Fatalf("expected a closing user turn after the assistant turn, got %+v", got)
+	}
+	// The closing turn must refer back to the existing request; a standalone
+	// "Pick the tool now." was read by models as a new, ambiguous user request.
+	if got[2].Content != forcedPickClosingTurn {
+		t.Fatalf("unexpected closing turn %q", got[2].Content)
+	}
+	if !strings.Contains(got[2].Content, "request above") || strings.Contains(got[2].Content, "Pick the tool now") {
+		t.Fatalf("closing turn must point back at the request above, got %q", got[2].Content)
 	}
 	if len(conv) != 2 {
 		t.Fatalf("input must not be mutated, got %d messages", len(conv))
