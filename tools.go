@@ -268,14 +268,23 @@ func normalizeSystemMessages(messages []openai.ChatCompletionMessage) []openai.C
 // (verified end-to-end through a rewriting proxy: 2/2 specs passed). Models
 // that never had the problem (qwen3.6, KAT-Coder) are unaffected by the
 // extra turn.
+//
+// The closing turn must point back at the request already in the conversation
+// rather than read as a new instruction: a bare "Pick the tool now." was taken
+// by models as a fresh, ambiguous user request ("The user's request 'Pick the
+// tool now' is ambiguous") and derailed the selection. The forced function's
+// own description still tells the model how to decline when no tool is needed.
 func closeWithUserTurnForForcedPick(messages []openai.ChatCompletionMessage, forceTool string) []openai.ChatCompletionMessage {
 	if forceTool == "" || len(messages) == 0 || messages[len(messages)-1].Role != "assistant" {
 		return messages
 	}
 	out := make([]openai.ChatCompletionMessage, len(messages), len(messages)+1)
 	copy(out, messages)
-	return append(out, openai.ChatCompletionMessage{Role: "user", Content: "Pick the tool now."})
+	return append(out, openai.ChatCompletionMessage{Role: "user", Content: forcedPickClosingTurn})
 }
+
+// forcedPickClosingTurn is the user turn appended by closeWithUserTurnForForcedPick.
+const forcedPickClosingTurn = "Continue with my request above: make the required function call for it now."
 
 // closeConversationWithUserTurnForForcedPick is closeWithUserTurnForForcedPick
 // for the provider-aware message list of the non-streaming decision path.
@@ -285,7 +294,7 @@ func closeConversationWithUserTurnForForcedPick(messages []Message, forceTool st
 	}
 	out := make([]Message, len(messages), len(messages)+1)
 	copy(out, messages)
-	return append(out, Message{Portable: openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: "Pick the tool now."}})
+	return append(out, Message{Portable: openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: forcedPickClosingTurn}})
 }
 
 // mergeConsecutiveAssistantMessages collapses runs of two or more consecutive
