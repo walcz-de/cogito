@@ -795,6 +795,9 @@ func convertOptionsToFunctions(o *Options) []Option {
 		child.sinkState = sinkState
 		child.sinkStateTool = sinkStateTool
 	})
+	if o.reasoningMaxTokens != 0 {
+		opts = append(opts, WithReasoningMaxTokens(o.reasoningMaxTokens))
+	}
 	if o.maxRetries > 0 {
 		opts = append(opts, WithMaxRetries(o.maxRetries))
 	}
